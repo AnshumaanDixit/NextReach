@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Next Reach</string>
+    <string name="title_activity_main">Next Reach</string>
+    <string name="package_name">com.nextreach.app</string>
+    <string name="custom_url_scheme">com.nextreach.app</string>
+</resources>
