@@ -1,58 +1,77 @@
 'use client';
 
 import { useState } from 'react';
-import { Geolocation } from '@capacitor/geolocation';
 import ProxyTunnel from '@/lib/plugins/ProxyTunnel';
 
 export default function Home() {
   const [status, setStatus] = useState<string>('Disconnected');
-  const [coords, setCoords] = useState<{ lat: number | null; lng: number | null }>({
-    lat: null,
-    lng: null,
-  });
+  const [ip, setIp] = useState<string>(''); // e.g. "3.110.xx.yy"
+  const [port, setPort] = useState<string>('51820');
+  const [clientPrivateKey, setClientPrivateKey] = useState<string>('');
+  const [clientPublicKey, setClientPublicKey] = useState<string>('');
+  const [serverPublicKey, setServerPublicKey] = useState<string>('');
+  const [clientAddressCidr, setClientAddressCidr] = useState<string>('10.0.0.2/32');
+  const [dns, setDns] = useState<string>('1.1.1.1');
+
+  const handleGenerateKeys = async () => {
+    try {
+      setStatus('Generating keys…');
+      const { privateKey, publicKey } = await ProxyTunnel.generateKeypair();
+      setClientPrivateKey(privateKey);
+      setClientPublicKey(publicKey);
+
+      // Suggest a random /32 in 10.0.0.0/24 to reduce collisions.
+      // (Server must still allow this exact IP for the peer.)
+      const lastOctet = 2 + Math.floor(Math.random() * 240);
+      setClientAddressCidr(`10.0.0.${lastOctet}/32`);
+
+      setStatus('Keys generated (add public key on server)');
+      if (typeof navigator !== 'undefined' && navigator.clipboard) {
+        await navigator.clipboard.writeText(publicKey);
+      }
+    } catch (error) {
+      console.error(error);
+      setStatus('Disconnected (Failed to generate keys)');
+    }
+  };
+
+  const copyToClipboard = async (text: string) => {
+    try {
+      if (!text) return;
+      await navigator.clipboard.writeText(text);
+    } catch (error) {
+      console.error(error);
+    }
+  };
 
   const handleConnect = async () => {
     try {
-      setStatus('Fetching location...');
-      
-      // Request permissions and fetch location
-      const permissions = await Geolocation.checkPermissions();
-      if (permissions.location !== 'granted') {
-        const req = await Geolocation.requestPermissions();
-        if (req.location !== 'granted') {
-          setStatus('Permission denied. Disconnected.');
-          return;
-        }
+      if (!ip.trim()) {
+        setStatus('Disconnected (Missing server IP)');
+        return;
+      }
+      const parsedPort = Number(port);
+      if (!Number.isFinite(parsedPort) || parsedPort <= 0) {
+        setStatus('Disconnected (Invalid port)');
+        return;
+      }
+      if (!clientPrivateKey.trim() || !serverPublicKey.trim()) {
+        setStatus('Disconnected (Missing keys)');
+        return;
       }
 
-      const position = await Geolocation.getCurrentPosition();
-      const lat = position.coords.latitude;
-      const lng = position.coords.longitude;
-      
-      setCoords({ lat, lng });
-      setStatus('Finding best server...');
+      setStatus('Connecting… (VPN prompt may appear)');
 
-      // Connect to the backend
-      const response = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL || ''}/api/optimal-server`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ latitude: lat, longitude: lng }),
+      await ProxyTunnel.startConnection({
+        ip: ip.trim(),
+        port: parsedPort,
+        clientPrivateKey: clientPrivateKey.trim(),
+        serverPublicKey: serverPublicKey.trim(),
+        clientAddressCidr: clientAddressCidr.trim() || undefined,
+        dns: dns.trim() || undefined,
       });
 
-      if (!response.ok) {
-        throw new Error('Failed to fetch optimal server');
-      }
-
-      const data = await response.json();
-      const { proxyIp, port } = data;
-
-      setStatus(`Connected to ${proxyIp}`);
-
-      // Start Capacitor Native connection
-      await ProxyTunnel.startConnection({ ip: proxyIp, port });
-      
+      setStatus(`Connected to ${ip.trim()}:${parsedPort}`);
     } catch (error) {
       console.error(error);
       setStatus('Disconnected (Error occurred)');
@@ -80,20 +99,103 @@ export default function Home() {
           {status}
         </p>
 
-        <div className="w-full bg-black/40 rounded-xl p-4 mb-8 border border-white/5 font-mono text-sm">
-          <div className="flex justify-between items-center mb-2">
-            <span className="text-gray-400">LATITUDE:</span>
-            <span className="text-white font-medium">{coords.lat !== null ? coords.lat.toFixed(6) : '---'}</span>
+        <div className="w-full bg-black/40 rounded-2xl p-4 mb-8 border border-white/5 space-y-3">
+          <div className="grid grid-cols-3 gap-3">
+            <label className="col-span-2">
+              <div className="text-xs text-gray-400 mb-1 font-mono">SERVER IP / HOST</div>
+              <input
+                value={ip}
+                onChange={(e) => setIp(e.target.value)}
+                placeholder="e.g. 3.110.xx.yy"
+                className="w-full rounded-xl bg-gray-950/40 border border-white/10 px-3 py-2 text-sm text-white outline-none focus:border-cyan-500/60"
+              />
+            </label>
+            <label>
+              <div className="text-xs text-gray-400 mb-1 font-mono">PORT</div>
+              <input
+                value={port}
+                onChange={(e) => setPort(e.target.value)}
+                inputMode="numeric"
+                placeholder="51820"
+                className="w-full rounded-xl bg-gray-950/40 border border-white/10 px-3 py-2 text-sm text-white outline-none focus:border-cyan-500/60"
+              />
+            </label>
           </div>
-          <div className="flex justify-between items-center">
-            <span className="text-gray-400">LONGITUDE:</span>
-            <span className="text-white font-medium">{coords.lng !== null ? coords.lng.toFixed(6) : '---'}</span>
+
+          <label>
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-xs text-gray-400 mb-1 font-mono">CLIENT PRIVATE KEY (DEVICE)</div>
+              <button
+                type="button"
+                onClick={handleGenerateKeys}
+                className="text-xs font-mono text-cyan-300 hover:text-cyan-200 transition-colors"
+              >
+                GENERATE ON THIS DEVICE
+              </button>
+            </div>
+            <input
+              value={clientPrivateKey}
+              onChange={(e) => setClientPrivateKey(e.target.value)}
+              placeholder="base64 private key"
+              className="w-full rounded-xl bg-gray-950/40 border border-white/10 px-3 py-2 text-sm text-white outline-none focus:border-cyan-500/60"
+            />
+          </label>
+
+          <label>
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-xs text-gray-400 mb-1 font-mono">CLIENT PUBLIC KEY (ADD TO SERVER)</div>
+              <button
+                type="button"
+                onClick={() => copyToClipboard(clientPublicKey)}
+                className="text-xs font-mono text-cyan-300 hover:text-cyan-200 transition-colors disabled:opacity-50"
+                disabled={!clientPublicKey}
+              >
+                COPY
+              </button>
+            </div>
+            <input
+              value={clientPublicKey}
+              readOnly
+              placeholder="generated public key will appear here"
+              className="w-full rounded-xl bg-gray-950/20 border border-white/10 px-3 py-2 text-sm text-white/80 outline-none"
+            />
+          </label>
+
+          <label>
+            <div className="text-xs text-gray-400 mb-1 font-mono">SERVER PUBLIC KEY</div>
+            <input
+              value={serverPublicKey}
+              onChange={(e) => setServerPublicKey(e.target.value)}
+              placeholder="base64 public key"
+              className="w-full rounded-xl bg-gray-950/40 border border-white/10 px-3 py-2 text-sm text-white outline-none focus:border-cyan-500/60"
+            />
+          </label>
+
+          <div className="grid grid-cols-2 gap-3">
+            <label>
+              <div className="text-xs text-gray-400 mb-1 font-mono">CLIENT ADDRESS (CIDR)</div>
+              <input
+                value={clientAddressCidr}
+                onChange={(e) => setClientAddressCidr(e.target.value)}
+                placeholder="10.0.0.2/32"
+                className="w-full rounded-xl bg-gray-950/40 border border-white/10 px-3 py-2 text-sm text-white outline-none focus:border-cyan-500/60"
+              />
+            </label>
+            <label>
+              <div className="text-xs text-gray-400 mb-1 font-mono">DNS (OPTIONAL)</div>
+              <input
+                value={dns}
+                onChange={(e) => setDns(e.target.value)}
+                placeholder="1.1.1.1"
+                className="w-full rounded-xl bg-gray-950/40 border border-white/10 px-3 py-2 text-sm text-white outline-none focus:border-cyan-500/60"
+              />
+            </label>
           </div>
         </div>
 
         <button
           onClick={handleConnect}
-          disabled={status.startsWith('Fetching') || status.startsWith('Finding')}
+          disabled={status.startsWith('Connecting')}
           className="relative w-full group overflow-hidden rounded-2xl bg-gradient-to-b from-cyan-500 to-cyan-700 p-[1px] transition-all hover:shadow-[0_0_40px_rgba(6,182,212,0.4)] active:scale-95 disabled:opacity-50 disabled:pointer-events-none"
         >
           <div className="relative h-14 w-full bg-gray-950/50 backdrop-blur-sm rounded-2xl flex items-center justify-center transition-all group-hover:bg-transparent">
