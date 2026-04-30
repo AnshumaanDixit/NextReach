@@ -86,7 +86,19 @@ export default function Home() {
       setStatus(`Connected to ${ip.trim()}:${parsedPort}`);
     } catch (error) {
       console.error(error);
-      setStatus('Disconnected (Error occurred)');
+      const message =
+        error instanceof Error
+          ? error.message
+          : typeof error === 'string'
+            ? error
+            : (() => {
+                try {
+                  return JSON.stringify(error);
+                } catch {
+                  return String(error);
+                }
+              })();
+      setStatus(`Disconnected (Error occurred: ${message})`);
     }
   };
 
