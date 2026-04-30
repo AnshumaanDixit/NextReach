@@ -51,7 +51,7 @@ export default function Home() {
       setStatus(`Connected to ${proxyIp}`);
 
       // Start Capacitor Native connection
-      await ProxyTunnel.startConnection({ ip: proxyIp });
+      await ProxyTunnel.startConnection({ ip: proxyIp, port });
       
     } catch (error) {
       console.error(error);
